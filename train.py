@@ -1,7 +1,6 @@
 import argparse
 from pprint import pprint
 from dataclasses import fields
-import tqdm
 from tqdm import trange
 import numpy as np
 import torch
@@ -118,7 +117,7 @@ def main():
         loss, result_dict = model(**data)
         loss.backward()
         # print("loss", loss.item())
-        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+        pbar.set_postfix({"loss": loss.item()})
         optimizer.step()
         scheduler.step()
 

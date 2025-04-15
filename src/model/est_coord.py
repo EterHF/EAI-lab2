@@ -60,7 +60,7 @@ class EstCoordNet(nn.Module):
         pc = F.relu(self.bn3(self.conv3(pc)))
         pc = self.conv4(pc)
         pc = pc.transpose(2,1).contiguous()
-        pc = F.log_softmapc(pc.view(-1, 3), dim=-1)
+        # pc = F.log_softmax(pc.view(-1, 3), dim=-1)
         est_coord = pc.view(batchsize, n_pts, 3)
 
         loss = F.mse_loss(est_coord, coord)
@@ -94,4 +94,82 @@ class EstCoordNet(nn.Module):
 
         The only requirement is that the input and output should be torch tensors on the same device and with the same dtype.
         """
-        raise NotImplementedError("You need to implement the est function")
+        # raise NotImplementedError("You need to implement the est function")
+
+        pc = pc.transpose(1, 2)
+        batchsize = pc.size()[0]
+        n_pts = pc.size()[2]
+        pc, _, _ = self.feat(pc)
+        pc = F.relu(self.bn1(self.conv1(pc)))
+        pc = F.relu(self.bn2(self.conv2(pc)))
+        pc = F.relu(self.bn3(self.conv3(pc)))
+        pc = self.conv4(pc)
+        pc = pc.transpose(2,1).contiguous()
+        # pc = F.log_softmax(pc.view(-1, 3), dim=-1)
+        est_coord = pc.view(batchsize, n_pts, 3)
+
+        device = pc.device
+        dtype = pc.dtype
+        batch_trans = []
+        batch_rot = []
+        
+        for b in range(batchsize):
+            src_points = pc[b].detach().cpu().numpy()
+            dst_points = est_coord[b].detach().cpu().numpy()
+            
+            # parameters of RANSAC
+            best_inliers = 0
+            best_R = np.eye(3)
+            best_t = np.zeros(3)
+            iterations = 1000
+            threshold = 0.0001
+            min_samples = 3
+            
+            for _ in range(iterations):
+                idx = np.random.choice(n_pts, min_samples, replace=False)
+                p1 = src_points[idx]
+                p2 = dst_points[idx]
+                
+                H = p2.T @ p1
+                U, _, Vt = np.linalg.svd(H)
+                R = U @ Vt
+                
+                if np.linalg.det(R) < 0:
+                    Vt[-1, :] *= -1
+                    R = U @ Vt
+                
+                t = p2[0] - R @ p1[0]
+                errors = np.linalg.norm(dst_points - (src_points @ R.T + t), axis=1)
+                inliers = np.sum(errors < threshold)
+                
+                if inliers > best_inliers:
+                    best_inliers = inliers
+                    best_R = R
+                    best_t = t
+            
+            errors = np.linalg.norm(dst_points - (src_points @ best_R.T + best_t), axis=1)
+            inlier_mask = errors < threshold
+            
+            if np.sum(inlier_mask) >= min_samples:
+                p1 = src_points[inlier_mask]
+                p2 = dst_points[inlier_mask]
+                
+                H = p2.T @ p1
+                U, _, Vt = np.linalg.svd(H)
+                R = U @ Vt
+
+                if np.linalg.det(R) < 0:
+                    Vt[-1, :] *= -1
+                    R = U @ Vt
+                
+                t = p2[0] - R @ p1[0]
+                best_R = R
+                best_t = t
+            
+            batch_rot.append(torch.tensor(best_R, device=device, dtype=dtype))
+            batch_trans.append(torch.tensor(best_t, device=device, dtype=dtype))
+        
+        rot = torch.stack(batch_rot)
+        trans = torch.stack(batch_trans)
+
+        return trans, rot

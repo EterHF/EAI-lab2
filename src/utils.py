@@ -85,7 +85,16 @@ def transform_grasp_pose(
     Grasp
         The transformed grasp in the robot frame.
     """
-    raise NotImplementedError
+    # raise NotImplementedError
+
+    trans_in_cam = est_rot @ grasp.trans + est_trans
+    rot_in_cam = est_rot @ grasp.rot
+    trans_in_robot = cam_rot @ trans_in_cam + cam_trans
+    rot_in_robot = cam_rot @ rot_in_cam
+
+    return Grasp(trans_in_robot, rot_in_robot, grasp.width)
+
+
 
 def get_pc(depth: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
     """
@@ -308,3 +317,11 @@ class PointNetEncoder(nn.Module):
         else:
             x = x.view(-1, 1024, 1).repeat(1, 1, N)
             return torch.cat([x, pointfeat], 1), trans, trans_feat
+
+def feature_transform_reguliarzer(trans):
+    d = trans.size()[1]
+    I = torch.eye(d)[None, :, :]
+    if trans.is_cuda:
+        I = I.cuda()
+    loss = torch.mean(torch.norm(torch.bmm(trans, trans.transpose(2, 1)) - I, dim=(1, 2)))
+    return loss
